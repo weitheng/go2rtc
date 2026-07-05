@@ -23,6 +23,7 @@ const (
 var PR = []string{"pr"}
 var PW = []string{"pw"}
 var PRPW = []string{"pr", "pw"}
+var PRPWWR = []string{"pr", "pw", "wr"}
 var EVPRPW = []string{"ev", "pr", "pw"}
 var EVPR = []string{"ev", "pr"}
 
@@ -86,6 +87,20 @@ func (a *Accessory) GetCharacterByID(iid uint64) *Character {
 		for _, char := range serv.Characters {
 			if char.IID == iid {
 				return char
+			}
+		}
+	}
+	return nil
+}
+
+// GetServiceByCharacterIID returns the service that owns the characteristic.
+// Useful for characteristics with the same type in multiple services (ex.
+// Active in CameraRTPStreamManagement and CameraRecordingManagement).
+func (a *Accessory) GetServiceByCharacterIID(iid uint64) *Service {
+	for _, serv := range a.Services {
+		for _, char := range serv.Characters {
+			if char.IID == iid {
+				return serv
 			}
 		}
 	}

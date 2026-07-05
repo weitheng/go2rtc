@@ -10,7 +10,7 @@ import (
 )
 
 func TestNilCharacter(t *testing.T) {
-	var res SetupEndpoints
+	var res SetupEndpointsRequest
 	char := &hap.Character{}
 	err := char.ReadTLV8(&res)
 	require.NotNil(t, err)
@@ -61,9 +61,11 @@ func TestAqaraG3(t *testing.T) {
 			},
 		},
 		{
-			name:   "114",
-			value:  "AaoBAQACEQEBAQIBAAAAAgECAwEABAEAAwsBAoAHAgI4BAMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAkABAgK0AAMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAgAEAgIAAwMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAkABAgLwAAMBHg==",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:  "114",
+			value: "AaoBAQACEQEBAQIBAAAAAgECAwEABAEAAwsBAoAHAgI4BAMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAkABAgK0AAMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAgAEAgIAAwMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAkABAgLwAAMBHg==",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -112,9 +114,11 @@ func TestAqaraG3(t *testing.T) {
 			},
 		},
 		{
-			name:   "116",
-			value:  "AgEAAAACAQEAAAIBAg==",
-			actual: &SupportedRTPConfiguration{},
+			name:  "116",
+			value: "AgEAAAACAQEAAAIBAg==",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedRTPConfiguration{},
 			expect: &SupportedRTPConfiguration{
 				SRTPCryptoType: []byte{CryptoAES_CM_128_HMAC_SHA1_80, CryptoAES_CM_256_HMAC_SHA1_80, CryptoDisabled},
 			},
@@ -128,9 +132,11 @@ func TestAqaraG3(t *testing.T) {
 func TestHomebridge(t *testing.T) {
 	tests := []testTLV8{
 		{
-			name:   "114",
-			value:  "AcUBAQACHQEBAAAAAQEBAAABAQICAQAAAAIBAQAAAgECAwEAAwsBAkABAgK0AAMBHgAAAwsBAkABAgLwAAMBDwAAAwsBAkABAgLwAAMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAoAHAgI4BAMBHgAAAwsBAkAGAgKwBAMBHg==",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:  "114",
+			value: "AcUBAQACHQEBAAAAAQEBAAABAQICAQAAAAIBAQAAAgECAwEAAwsBAkABAgK0AAMBHgAAAwsBAkABAgLwAAMBDwAAAwsBAkABAgLwAAMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAoAHAgI4BAMBHgAAAwsBAkAGAgKwBAMBHg==",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -176,9 +182,11 @@ func TestHomebridge(t *testing.T) {
 func TestScrypted(t *testing.T) {
 	tests := []testTLV8{
 		{
-			name:   "114",
-			value:  "AVIBAQACEwEBAQIBAAAAAgEBAAACAQIDAQADCwECAA8CAnAIAwEeAAADCwECgAcCAjgEAwEeAAADCwECAAUCAtACAwEeAAADCwECQAECAvAAAwEP",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:  "114",
+			value: "AVIBAQACEwEBAQIBAAAAAgEBAAACAQIDAQADCwECAA8CAnAIAwEeAAADCwECgAcCAjgEAwEeAAADCwECAAUCAtACAwEeAAADCwECQAECAvAAAwEP",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -200,9 +208,11 @@ func TestScrypted(t *testing.T) {
 			},
 		},
 		{
-			name:   "115",
-			value:  "AScBAQMCIgEBAQIBAAMBAAAAAwEAAAADAQEAAAMBAQAAAwECAAADAQICAQA=",
-			actual: &SupportedAudioStreamConfiguration{},
+			name:  "115",
+			value: "AScBAQMCIgEBAQIBAAMBAAAAAwEAAAADAQEAAAMBAQAAAwECAAADAQICAQA=",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedAudioStreamConfiguration{},
 			expect: &SupportedAudioStreamConfiguration{
 				Codecs: []AudioCodecConfiguration{
 					{
@@ -224,9 +234,11 @@ func TestScrypted(t *testing.T) {
 			},
 		},
 		{
-			name:   "116",
-			value:  "AgEAAAACAQI=",
-			actual: &SupportedRTPConfiguration{},
+			name:  "116",
+			value: "AgEAAAACAQI=",
+			// encoder uses 0xFF list separator, device capture uses 0x00
+			noequal: true,
+			actual:  &SupportedRTPConfiguration{},
 			expect: &SupportedRTPConfiguration{
 				SRTPCryptoType: []byte{CryptoAES_CM_128_HMAC_SHA1_80, CryptoDisabled},
 			},

@@ -7,14 +7,12 @@ type SupportedVideoRecordingConfiguration struct {
 }
 
 type VideoRecordingCodecConfiguration struct {
-	CodecType   uint8                         `tlv8:"1"`
+	CodecType   uint8                         `tlv8:"1"` // 0 - H.264
 	CodecParams VideoRecordingCodecParameters `tlv8:"2"`
-	CodecAttrs  VideoCodecAttributes          `tlv8:"3"`
+	VideoAttrs  []VideoCodecAttributes        `tlv8:"3"`
 }
 
 type VideoRecordingCodecParameters struct {
-	ProfileID      uint8  `tlv8:"1"`
-	Level          uint8  `tlv8:"2"`
-	Bitrate        uint32 `tlv8:"3"`
-	IFrameInterval uint32 `tlv8:"4"`
+	ProfileID []byte `tlv8:"1"` // 0 - baseline, 1 - main, 2 - high
+	Level     []byte `tlv8:"2"` // 0 - 3.1, 1 - 3.2, 2 - 4.0
 }

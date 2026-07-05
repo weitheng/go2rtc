@@ -95,3 +95,57 @@ streams:
 homekit:
   aqara1:  # same stream ID from streams list
 ```
+
+## HomeKit Secure Video (HKSV)
+
+go2rtc can work as a HomeKit Secure Video camera - Apple Home will record
+video clips to iCloud when motion is detected. Requires an Apple Home hub
+(HomePod or Apple TV) and an iCloud+ subscription.
+
+**Important**
+
+- Recordings support only H264 video and optional AAC audio
+- go2rtc doesn't analyse video, so motion should be triggered from an external
+  source: [Frigate](https://frigate.video/) over MQTT, Home Assistant,
+  camera ONVIF webhook, etc.
+- If the camera was paired before enabling `secure_video`, remove it from
+  Apple Home and pair it again
+- Recording settings (resolution, audio, etc.) are managed in Apple Home.
+  Apple Home stores its choices in the `recording_config`, `recording_active`,
+  `camera_active` and `recording_audio` config options - don't edit them
+- While recording is enabled in Apple Home, go2rtc keeps the camera stream
+  always running (for the prebuffer - clips start a few seconds before the
+  motion event)
+
+**Config**
+
+```yaml
+streams:
+  dahua1:
+    - rtsp://admin:password@192.168.1.123/cam/realmonitor?channel=1&subtype=0
+    - ffmpeg:dahua1#audio=aac    # recordings audio (skip if camera has AAC)
+    - ffmpeg:dahua1#audio=opus   # live view audio
+
+homekit:
+  dahua1:
+    secure_video: true
+    motion_mqtt: mqtt://user:pass@192.168.1.2:1883/frigate/dahua1/motion  # optional
+```
+
+**Motion trigger API**
+
+Any service that detects motion can call the go2rtc API:
+
+```
+POST /api/homekit/motion?src=dahua1              # motion pulse (auto off in 30s)
+POST /api/homekit/motion?src=dahua1&timeout=10   # motion pulse (auto off in 10s)
+POST /api/homekit/motion?src=dahua1&active=true  # motion on
+POST /api/homekit/motion?src=dahua1&active=false # motion off
+```
+
+**Motion from Frigate**
+
+Frigate publishes motion states to the `frigate/<camera>/motion` MQTT topic
+with `ON`/`OFF` payloads. Set the `motion_mqtt` option and go2rtc will
+subscribe to this topic directly (supported payloads: `ON`/`OFF`,
+`true`/`false`, `1`/`0`).

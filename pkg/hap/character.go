@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/AlexxIT/go2rtc/pkg/hap/tlv8"
 )
@@ -29,27 +30,40 @@ type Character struct {
 	//MinStep  any    `json:"minStep,omitempty"`
 	//ValidVal []any  `json:"valid-values,omitempty"`
 
+	mu        sync.Mutex
 	listeners map[io.Writer]bool
 }
 
 func (c *Character) AddListener(w io.Writer) {
-	// TODO: sync.Mutex
+	c.mu.Lock()
 	if c.listeners == nil {
 		c.listeners = map[io.Writer]bool{}
 	}
 	c.listeners[w] = true
+	c.mu.Unlock()
 }
 
 func (c *Character) RemoveListener(w io.Writer) {
+	c.mu.Lock()
 	delete(c.listeners, w)
 
 	if len(c.listeners) == 0 {
 		c.listeners = nil
 	}
+	c.mu.Unlock()
 }
 
 func (c *Character) NotifyListeners(ignore io.Writer) error {
-	if c.listeners == nil {
+	c.mu.Lock()
+	listeners := make([]io.Writer, 0, len(c.listeners))
+	for w := range c.listeners {
+		if w != ignore {
+			listeners = append(listeners, w)
+		}
+	}
+	c.mu.Unlock()
+
+	if len(listeners) == 0 {
 		return nil
 	}
 
@@ -58,10 +72,7 @@ func (c *Character) NotifyListeners(ignore io.Writer) error {
 		return err
 	}
 
-	for w := range c.listeners {
-		if w == ignore {
-			continue
-		}
+	for _, w := range listeners {
 		if _, err = w.Write(data); err != nil {
 			// error not a problem - just remove listener
 			c.RemoveListener(w)
@@ -73,9 +84,13 @@ func (c *Character) NotifyListeners(ignore io.Writer) error {
 
 // GenerateEvent with raw HTTP headers
 func (c *Character) GenerateEvent() (data []byte, err error) {
+	c.mu.Lock()
+	value := c.Value
+	c.mu.Unlock()
+
 	v := JSONCharacters{
 		Value: []JSONCharacter{
-			{AID: DeviceAID, IID: c.IID, Value: c.Value},
+			{AID: DeviceAID, IID: c.IID, Value: value},
 		},
 	}
 	if data, err = json.Marshal(v); err != nil {
@@ -110,6 +125,9 @@ func (c *Character) Set(v any) (err error) {
 
 // Write new value with right format
 func (c *Character) Write(v any) (err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	switch c.Format {
 	case "tlv8":
 		c.Value, err = tlv8.MarshalBase64(v)
@@ -123,6 +141,14 @@ func (c *Character) Write(v any) (err error) {
 		}
 	}
 	return
+}
+
+// StoreValue sets the raw value. Safe for use from multiple goroutines
+// (unlike direct Value field assignment).
+func (c *Character) StoreValue(v any) {
+	c.mu.Lock()
+	c.Value = v
+	c.mu.Unlock()
 }
 
 // ReadTLV8 value to right struct

@@ -16,6 +16,8 @@ const (
 	PUBACK    = 0x40
 	SUBSCRIBE = 0x82
 	SUBACK    = 0x90
+	PINGREQ   = 0xC0
+	PINGRESP  = 0xD0
 	QOS1      = 0x02
 )
 

@@ -26,6 +26,16 @@ func Init() {
 			DevicePrivate string   `yaml:"device_private"`
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
+
+			// HomeKit Secure Video
+			SecureVideo bool   `yaml:"secure_video"`
+			MotionMQTT  string `yaml:"motion_mqtt"`
+
+			// HKSV state, managed by Apple Home (not by user)
+			RecordingConfig string `yaml:"recording_config"`
+			RecordingActive bool   `yaml:"recording_active"`
+			CameraActive    *bool  `yaml:"camera_active"`
+			RecordingAudio  bool   `yaml:"recording_audio"`
 		} `yaml:"homekit"`
 	}
 	app.LoadConfig(&cfg)
@@ -36,6 +46,7 @@ func Init() {
 
 	api.HandleFunc("api/homekit", apiHomekit)
 	api.HandleFunc("api/homekit/accessories", apiHomekitAccessories)
+	api.HandleFunc("api/homekit/motion", apiHomekitMotion)
 	api.HandleFunc("api/discovery/homekit", apiDiscovery)
 
 	if cfg.Mod == nil {
@@ -102,9 +113,32 @@ func Init() {
 		if url := findHomeKitURL(stream.Sources()); url != "" {
 			// 1. Act as transparent proxy for HomeKit camera
 			srv.proxyURL = url
+
+			if conf.SecureVideo {
+				log.Warn().Msgf("[homekit] secure_video doesn't work in proxy mode: %s", id)
+			}
 		} else {
 			// 2. Act as basic HomeKit camera
 			srv.accessory = camera.NewAccessory("AlexxIT", "go2rtc", name, "-", app.Version)
+
+			if conf.SecureVideo {
+				cameraActive := conf.CameraActive == nil || *conf.CameraActive
+
+				if err = srv.enableSecureVideo(
+					conf.RecordingConfig, conf.RecordingActive, cameraActive, conf.RecordingAudio,
+				); err != nil {
+					log.Error().Err(err).Caller().Send()
+					continue
+				}
+
+				// accessory database changed, paired controllers
+				// should re-fetch it
+				srv.mdns.Info[hap.TXTConfigNumber] = "2"
+
+				if conf.MotionMQTT != "" {
+					go srv.motionMQTT(conf.MotionMQTT)
+				}
+			}
 		}
 
 		host := srv.mdns.Host(mdns.ServiceHAP)

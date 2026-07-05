@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/app"
 	"github.com/AlexxIT/go2rtc/internal/ffmpeg"
@@ -42,6 +43,20 @@ type server struct {
 	proxyURL  string
 	setupID   string
 	stream    string // stream name from YAML
+
+	// HomeKit Secure Video state
+	secureVideo     bool
+	recMu           sync.Mutex // guards fields below
+	recSelected     *camera.SelectedCameraRecordingConfiguration
+	recConsumer     *recConsumer
+	recSession      *recSession
+	recordingActive bool
+	cameraActive    bool
+	audioActive     bool
+	armMu           sync.Mutex // serializes armRecorder transitions
+
+	motionMu    sync.Mutex
+	motionTimer *time.Timer
 }
 
 func (s *server) MarshalJSON() ([]byte, error) {
@@ -120,10 +135,24 @@ func (s *server) Handle(w http.ResponseWriter, r *http.Request) {
 			handler = homekit.ProxyHandler(s, client.Conn)
 		}
 
+		defer s.removeListeners(controller)
+
 		// If your iPhone goes to sleep, it will be an EOF error.
 		if err = handler(controller); err != nil && !errors.Is(err, io.EOF) {
 			log.Error().Err(err).Caller().Send()
 			return
+		}
+	}
+}
+
+// removeListeners removes conn from event subscriptions of all characteristics.
+func (s *server) removeListeners(w io.Writer) {
+	if s.accessory == nil {
+		return
+	}
+	for _, service := range s.accessory.Services {
+		for _, char := range service.Characters {
+			char.RemoveListener(w)
 		}
 	}
 }
@@ -277,6 +306,88 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 		consumer.SetOffer(&offer)
 		s.consumer = consumer
 
+	case camera.TypeSelectedCameraRecordingConfiguration:
+		raw, ok := value.(string)
+		if !ok {
+			return
+		}
+
+		var conf camera.SelectedCameraRecordingConfiguration
+		if err := tlv8.UnmarshalBase64(raw, &conf); err != nil {
+			log.Error().Err(err).Str("stream", s.stream).Msg("[homekit] wrong recording config")
+			return
+		}
+
+		log.Debug().Str("stream", s.stream).Msgf(
+			"[homekit] hksv config: prebuffer=%dms fragment=%dms video=%dx%d@%d audio=%d",
+			conf.GeneralConfig.PrebufferLength,
+			conf.GeneralConfig.MediaContainerConfig.MediaContainerParams.FragmentLength,
+			conf.VideoConfig.VideoAttrs.Width, conf.VideoConfig.VideoAttrs.Height,
+			conf.VideoConfig.VideoAttrs.Framerate, conf.AudioConfig.CodecType,
+		)
+
+		char.StoreValue(raw)
+
+		s.recMu.Lock()
+		s.recSelected = &conf
+		s.recMu.Unlock()
+
+		s.PatchRecording("recording_config", raw)
+		s.armRecorder()
+
+	case camera.TypeActive:
+		// Active char is present in CameraRTPStreamManagement and
+		// CameraRecordingManagement services, check the service type
+		service := s.accessory.GetServiceByCharacterIID(iid)
+		if service == nil || service.Type != camera.TypeServiceCameraRecordingManagement {
+			return
+		}
+
+		char.StoreValue(value)
+		_ = char.NotifyListeners(conn)
+
+		s.recMu.Lock()
+		s.recordingActive = toBool(value)
+		active := s.recordingActive
+		s.recMu.Unlock()
+
+		log.Debug().Str("stream", s.stream).Msgf("[homekit] hksv recording active=%t", active)
+
+		s.PatchRecording("recording_active", active)
+		s.armRecorder()
+
+	case camera.TypeHomeKitCameraActive:
+		char.StoreValue(value)
+		_ = char.NotifyListeners(conn)
+
+		s.recMu.Lock()
+		s.cameraActive = toBool(value)
+		active := s.cameraActive
+		s.recMu.Unlock()
+
+		// mirror to the StatusActive char of the MotionSensor service
+		if status := s.accessory.GetCharacter(camera.TypeStatusActive); status != nil {
+			_ = status.Set(active)
+		}
+
+		s.PatchRecording("camera_active", active)
+		s.armRecorder()
+
+	case camera.TypeRecordingAudioActive:
+		char.StoreValue(value)
+		_ = char.NotifyListeners(conn)
+
+		s.recMu.Lock()
+		s.audioActive = toBool(value)
+		active := s.audioActive
+		s.recMu.Unlock()
+
+		s.PatchRecording("recording_audio", active)
+
+	case camera.TypeEventSnapshotsActive, camera.TypePeriodicSnapshotsActive:
+		char.StoreValue(value)
+		_ = char.NotifyListeners(conn)
+
 	case camera.TypeSelectedStreamConfiguration:
 		var conf camera.SelectedStreamConfiguration
 		if err := tlv8.UnmarshalBase64(value, &conf); err != nil {
@@ -322,6 +433,142 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 			}()
 		}
 	}
+}
+
+// SetCharacteristicWR handles write-response characteristics
+// (SetupDataStreamTransport). Returns the value for the HAP response.
+func (s *server) SetCharacteristicWR(conn net.Conn, aid uint8, iid uint64, value any) any {
+	char := s.accessory.GetCharacterByID(iid)
+	if char == nil {
+		log.Warn().Msgf("[homekit] set unknown characteristic: %d", iid)
+		return nil
+	}
+
+	if char.Type != camera.TypeSetupDataStreamTransport {
+		s.SetCharacteristic(conn, aid, iid, value)
+		return nil
+	}
+
+	failure := func() any {
+		v, _ := tlv8.MarshalBase64(camera.SetupDataStreamTransportResponse{Status: 1})
+		return v
+	}
+
+	var req camera.SetupDataStreamTransportRequest
+	if err := tlv8.UnmarshalBase64(value, &req); err != nil {
+		log.Error().Err(err).Str("stream", s.stream).Msg("[homekit] wrong hds request")
+		return failure()
+	}
+
+	// only session command "start" (0) with transport "TCP" (0) is defined
+	if req.SessionCommandType != 0 || req.TransportType != 0 {
+		return failure()
+	}
+
+	hapConn, ok := conn.(*hap.Conn)
+	if !ok {
+		return failure()
+	}
+
+	hdsServer, err := hds.NewServer(hapConn.SharedKey, req.ControllerKeySalt)
+	if err != nil {
+		log.Error().Err(err).Str("stream", s.stream).Msg("[homekit] hds listen")
+		return failure()
+	}
+
+	log.Debug().Str("stream", s.stream).Msgf("[homekit] hds listen on port %d", hdsServer.Port())
+
+	go func() {
+		hdsConn, err := hdsServer.Accept()
+		if err != nil {
+			log.Debug().Err(err).Str("stream", s.stream).Msg("[homekit] hds accept")
+			return
+		}
+		s.serveHDS(hdsConn)
+	}()
+
+	res := camera.SetupDataStreamTransportResponse{
+		Status:           0,
+		AccessoryKeySalt: hdsServer.AccessorySalt(),
+	}
+	res.TransportTypeSessionParameters.TCPListeningPort = hdsServer.Port()
+
+	v, err := tlv8.MarshalBase64(res)
+	if err != nil {
+		return failure()
+	}
+	return v
+}
+
+// SetEventCharacteristic handles "ev" subscription requests.
+func (s *server) SetEventCharacteristic(conn net.Conn, aid uint8, iid uint64, enable bool) {
+	char := s.accessory.GetCharacterByID(iid)
+	if char == nil {
+		return
+	}
+
+	log.Trace().Str("stream", s.stream).Msgf("[homekit] events aid=%d iid=0x%x enable=%t", aid, iid, enable)
+
+	if enable {
+		char.AddListener(conn)
+	} else {
+		char.RemoveListener(conn)
+	}
+}
+
+// SetMotion sets the motion sensor state and notifies subscribed
+// controllers. With active recording state, the Apple Home hub reacts
+// to the motion event with a new HKSV recording session.
+func (s *server) SetMotion(active bool) error {
+	if !s.secureVideo {
+		return errors.New("homekit: secure_video is disabled for: " + s.stream)
+	}
+
+	char := s.accessory.GetCharacter(camera.TypeMotionDetected)
+	if char == nil {
+		return errors.New("homekit: no motion sensor for: " + s.stream)
+	}
+
+	log.Debug().Str("stream", s.stream).Msgf("[homekit] motion=%t", active)
+
+	return char.Set(active)
+}
+
+// PulseMotion sets the motion sensor on with automatic off.
+func (s *server) PulseMotion(timeout time.Duration) error {
+	if err := s.SetMotion(true); err != nil {
+		return err
+	}
+
+	s.motionMu.Lock()
+	if s.motionTimer != nil {
+		s.motionTimer.Stop()
+	}
+	s.motionTimer = time.AfterFunc(timeout, func() {
+		_ = s.SetMotion(false)
+	})
+	s.motionMu.Unlock()
+
+	return nil
+}
+
+// PatchRecording persists HKSV state to the config file.
+func (s *server) PatchRecording(key string, value any) {
+	if err := app.PatchConfig([]string{"homekit", s.stream, key}, value); err != nil {
+		log.Error().Err(err).Msgf("[homekit] can't save %s %s", s.stream, key)
+	}
+}
+
+func toBool(v any) bool {
+	switch v := v.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	}
+	return false
 }
 
 func (s *server) GetImage(conn net.Conn, width, height int) []byte {

@@ -119,16 +119,4 @@ func TestName(t *testing.T) {
 	_ = prod2.Stop()
 }
 
-func TestStripUserinfo(t *testing.T) {
-	s := `streams:
-  test:
-    - ffmpeg:rtsp://username:password@10.1.2.3:554/stream1
-    - ffmpeg:rtsp://10.1.2.3:554/stream1@#video=copy
-`
-	s = StripUserinfo(s)
-	require.Equal(t, `streams:
-  test:
-    - ffmpeg:rtsp://***@10.1.2.3:554/stream1
-    - ffmpeg:rtsp://10.1.2.3:554/stream1@#video=copy
-`, s)
-}
+// StripUserinfo moved to the creds package, see pkg/creds/secrets_test.go

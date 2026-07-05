@@ -35,6 +35,19 @@ type ServerAccessory interface {
 	GetImage(conn net.Conn, width, height int) []byte
 }
 
+// ServerEvents - optional interface for servers with support for
+// event notifications ("ev" subscriptions).
+type ServerEvents interface {
+	SetEventCharacteristic(conn net.Conn, aid uint8, iid uint64, enable bool)
+}
+
+// ServerWriteResponse - optional interface for servers with support for
+// write-response characteristics (ex. SetupDataStreamTransport).
+// Should return the new characteristic value for the response.
+type ServerWriteResponse interface {
+	SetCharacteristicWR(conn net.Conn, aid uint8, iid uint64, value any) any
+}
+
 func ServerHandler(server Server) HandlerFunc {
 	return handleRequest(func(conn net.Conn, req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
@@ -68,23 +81,64 @@ func ServerHandler(server Server) HandlerFunc {
 						AID   uint8  `json:"aid"`
 						IID   uint64 `json:"iid"`
 						Value any    `json:"value"`
+						Event *bool  `json:"ev"`
+						WR    bool   `json:"r"`
 					} `json:"characteristics"`
 				}
 				if err := json.NewDecoder(req.Body).Decode(&v); err != nil {
 					return nil, err
 				}
 
+				var writeResponse bool
+
 				for _, char := range v.Value {
-					server.SetCharacteristic(conn, char.AID, char.IID, char.Value)
+					if char.Event != nil {
+						if events, ok := server.(ServerEvents); ok {
+							events.SetEventCharacteristic(conn, char.AID, char.IID, *char.Event)
+						}
+					}
+					if char.WR {
+						writeResponse = true
+					}
 				}
 
-				res := &http.Response{
-					StatusCode: http.StatusNoContent,
-					Proto:      "HTTP",
-					ProtoMajor: 1,
-					ProtoMinor: 1,
+				if !writeResponse {
+					for _, char := range v.Value {
+						if char.Value != nil {
+							server.SetCharacteristic(conn, char.AID, char.IID, char.Value)
+						}
+					}
+
+					res := &http.Response{
+						StatusCode: http.StatusNoContent,
+						Proto:      "HTTP",
+						ProtoMajor: 1,
+						ProtoMinor: 1,
+					}
+					return res, nil
 				}
-				return res, nil
+
+				// write-response requires 207 Multi-Status with values
+				var body hap.JSONCharacters
+				for _, char := range v.Value {
+					var value any
+					if char.Value != nil {
+						if wr, ok := server.(ServerWriteResponse); ok && char.WR {
+							value = wr.SetCharacteristicWR(conn, char.AID, char.IID, char.Value)
+						} else {
+							server.SetCharacteristic(conn, char.AID, char.IID, char.Value)
+						}
+					}
+					body.Value = append(body.Value, hap.JSONCharacter{
+						AID: char.AID, IID: char.IID, Status: 0, Value: value,
+					})
+				}
+
+				res, err := makeResponse(hap.MimeJSON, body)
+				if err == nil {
+					res.StatusCode = http.StatusMultiStatus
+				}
+				return res, err
 			}
 
 		case hap.PathResource:
@@ -107,10 +161,10 @@ func ServerHandler(server Server) HandlerFunc {
 
 func handleRequest(handle func(conn net.Conn, req *http.Request) (*http.Response, error)) HandlerFunc {
 	return func(conn net.Conn) error {
-		rw := bufio.NewReaderSize(conn, 16*1024)
-		wr := bufio.NewWriterSize(conn, 16*1024)
+		rd := bufio.NewReaderSize(conn, 16*1024)
+		wr := bytes.NewBuffer(nil)
 		for {
-			req, err := http.ReadRequest(rw)
+			req, err := http.ReadRequest(rd)
 			//debug(req)
 			if err != nil {
 				return err
@@ -122,10 +176,15 @@ func handleRequest(handle func(conn net.Conn, req *http.Request) (*http.Response
 				return err
 			}
 
+			// hap.Conn.Write holds the write mutex for the whole message,
+			// event notifications go through the same lock, so buffering
+			// the response into a single Write keeps HTTP messages and
+			// events from interleaving on the encrypted session
+			wr.Reset()
 			if err = res.Write(wr); err != nil {
 				return err
 			}
-			if err = wr.Flush(); err != nil {
+			if _, err = conn.Write(wr.Bytes()); err != nil {
 				return err
 			}
 		}

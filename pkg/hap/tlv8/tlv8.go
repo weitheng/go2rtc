@@ -303,22 +303,22 @@ func unmarshalValue(v []byte, value reflect.Value) error {
 		value.SetUint(uint64(v[0]))
 
 	case reflect.Uint16:
-		if len(v) != 2 {
+		if len(v) < 1 || len(v) > 2 {
 			return errors.New("tlv8: wrong size: " + value.Type().Name())
 		}
-		value.SetUint(uint64(v[0]) | uint64(v[1])<<8)
+		value.SetUint(leUint(v))
 
 	case reflect.Uint32:
-		if len(v) != 4 {
+		if len(v) < 1 || len(v) > 4 {
 			return errors.New("tlv8: wrong size: " + value.Type().Name())
 		}
-		value.SetUint(uint64(v[0]) | uint64(v[1])<<8 | uint64(v[2])<<16 | uint64(v[3])<<24)
+		value.SetUint(leUint(v))
 
 	case reflect.Uint64:
-		if len(v) != 8 {
+		if len(v) < 1 || len(v) > 8 {
 			return errors.New("tlv8: wrong size: " + value.Type().Name())
 		}
-		value.SetUint(binary.LittleEndian.Uint64(v))
+		value.SetUint(leUint(v))
 
 	case reflect.Float32:
 		f := math.Float32frombits(binary.LittleEndian.Uint32(v))
@@ -349,6 +349,16 @@ func unmarshalValue(v []byte, value reflect.Value) error {
 	}
 
 	return nil
+}
+
+// leUint decodes little-endian uint of any size (1..8 bytes). Some
+// controllers encode values with fewer bytes than the format suggests,
+// ex. eventTriggerOptions in the selected HKSV recording configuration.
+func leUint(v []byte) (n uint64) {
+	for i := len(v) - 1; i >= 0; i-- {
+		n = n<<8 | uint64(v[i])
+	}
+	return
 }
 
 func getStructField(value reflect.Value, tag string) (reflect.Value, bool) {

@@ -82,7 +82,29 @@ func TestVideoCodecParams(t *testing.T) {
 	dst, err := Marshal(v)
 	require.Nil(t, err)
 
-	require.Equal(t, src, dst)
+	// encoder uses 0xFF as list separator, source uses 0x00
+	expected, err := hex.DecodeString("010101020100ff00020102030100040100")
+	require.Nil(t, err)
+
+	require.Equal(t, expected, dst)
+}
+
+func TestShortUint(t *testing.T) {
+	// controllers may encode values with fewer bytes than the format
+	// suggests, ex. eventTriggerOptions (uint64) as 4 bytes
+	type Struct struct {
+		A uint64 `tlv8:"1"`
+		B uint32 `tlv8:"2"`
+		C uint16 `tlv8:"3"`
+	}
+
+	src, err := hex.DecodeString("01040100000002010103020102")
+	require.Nil(t, err)
+
+	var v Struct
+	err = Unmarshal(src, &v)
+	require.Nil(t, err)
+	require.Equal(t, Struct{A: 1, B: 1, C: 0x0201}, v)
 }
 
 func TestInterface(t *testing.T) {

@@ -64,6 +64,16 @@ func (c *Client) Publish(topic string, payload []byte) (err error) {
 	return
 }
 
+// Ping sends PINGREQ, useful as keepalive when subscribed to a quiet topic.
+func (c *Client) Ping() (err error) {
+	if err = c.conn.SetDeadline(time.Now().Add(Timeout)); err != nil {
+		return
+	}
+
+	_, err = c.conn.Write([]byte{PINGREQ, 0})
+	return
+}
+
 func (c *Client) Read() (string, []byte, error) {
 	if err := c.conn.SetDeadline(time.Now().Add(Timeout)); err != nil {
 		return "", nil, err

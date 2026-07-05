@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -45,8 +46,9 @@ func NewConn(conn net.Conn, key []byte, salt string, controller bool) (*Conn, er
 type Conn struct {
 	conn net.Conn
 
-	rd *bufio.Reader
-	wr *bufio.Writer
+	rd  *bufio.Reader
+	wr  *bufio.Writer
+	wmu sync.Mutex // serialize WriteMessage calls
 
 	decryptKey []byte
 	encryptKey []byte
