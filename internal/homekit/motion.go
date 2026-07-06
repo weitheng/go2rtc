@@ -94,7 +94,7 @@ func (s *server) motionMQTT(rawURL string) {
 
 	for delay := time.Second; ; delay = min(delay*2, time.Minute) {
 		if err = s.listenMQTT(address, topic, username, password); err != nil {
-			log.Debug().Err(err).Msgf("[homekit] motion_mqtt for %s", s.stream)
+			log.Warn().Err(err).Msgf("[homekit] motion_mqtt for %s", s.stream)
 		}
 
 		time.Sleep(delay)
@@ -109,14 +109,15 @@ func (s *server) listenMQTT(address, topic, username, password string) error {
 	defer conn.Close()
 
 	client := mqtt.NewClient(conn)
-	if err = client.Connect("go2rtc-"+core.RandString(8, 0), username, password); err != nil {
+	// base62 is important, client identifier should be alphanumeric
+	if err = client.Connect("go2rtc-"+core.RandString(8, 62), username, password); err != nil {
 		return err
 	}
 	if err = client.Subscribe(topic); err != nil {
 		return err
 	}
 
-	log.Debug().Msgf("[homekit] motion_mqtt connected for %s", s.stream)
+	log.Info().Msgf("[homekit] motion_mqtt connected for %s", s.stream)
 
 	for {
 		msgTopic, payload, err := client.Read()
